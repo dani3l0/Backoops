@@ -1,0 +1,152 @@
+import subprocess
+import time, os
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta
+
+############################## CONFIG ##############################
+
+BACKUP_AT = "17:00"							# backup at HH:MM
+BACKUP_DAYS = 3								# backup each n days
+PURGE_DAYS = 60								# the oldest snapshot to keep
+BACKUP_TARGET_UUID = "uuid-1234-56789"		# UUID of RAID BTRFS filesystem
+BACKUP_TARGET_PATH = "/backups"				# RAID BTRFS mounted volume path
+BACKUP_DIR = "Backups"						# btrfs subvolume
+NTFY_URL = "http://127.0.0.1:8080/bckps"	# ntfy URL
+SPINDOWN_DEVICES = ["/dev/disk/by-partuuid/aaaa-bb-cccc",	# Paths to disks to spin down
+					"/dev/disk/by-partuuid/dddd-ee-ffff"]	# by using hdparm -Y
+
+####################################################################
+
+
+# PUSH Notifications & Logger
+def notify(title, message):
+	subprocess.run(["curl", "-H", f"Tags: floppy_disk", "-H", f"Title: {title}", "-d", message, NTFY_URL])
+	log(f"{title} | {message}")
+
+
+# Make a backup of one
+def backup_storage(storage_path, backup_target_path=BACKUP_TARGET_PATH):
+	log(f"Backing up '{storage_path}' ...")
+	backup_dir = os.path.join(backup_target_path, BACKUP_DIR, storage_path)
+	if not os.path.exists(backup_dir):
+		os.makedirs(backup_dir)
+
+	r = subprocess.run(["rsync", "-aq", "--delete", f"{storage_path}/", f"{backup_target_path}/{BACKUP_DIR}/{storage_path}/"])
+	if r.returncode != 0:
+		notify("Backup failed!", f"Rsync job for {storage_path} returned with error {r.returncode}.\nCheck logs for more details.")
+	else:
+		notify("Backup successful!", f"Rsync job for {storage_path} completed without errors.")
+
+
+# Spindown all drives
+def spindown():
+	for device in SPINDOWN_DEVICES:
+		log(f"Spinning down {device}...")
+		subprocess.run(["hdparm", "-Y", device])
+
+
+def mount():
+	subprocess.run(["mount", f"/dev/disk/by-uuid/{BACKUP_TARGET_UUID}", BACKUP_TARGET_PATH])
+
+# Make full backup
+def make_full_backup():
+	# Mount
+	log("Mounting backup drive...")
+	mount()
+	time.sleep(30)
+
+	# Check if the target directory exists, create it if not
+	backup_dir = os.path.join(BACKUP_TARGET_PATH, BACKUP_DIR)
+	if not os.path.exists(backup_dir):
+		os.makedirs(backup_dir)
+
+	# Backup data
+	backup_storage("/srv")
+	backup_storage("/storage/files")
+
+	# Make snapshot, delete old ones
+	snapshot_name = gen_snapshot_name()
+	make_btrfs_snapshot(backup_dir, snapshot_name)
+	find_snapshots_older_than(PURGE_DAYS)
+
+	# Unmount & spindown HDDs
+	time.sleep(90)
+	log("Unmounting backup drive...")
+	subprocess.run(["umount", BACKUP_TARGET_PATH])
+	time.sleep(30)
+	spindown()
+
+
+def make_btrfs_snapshot(path, snapshot_name):
+	log("Making snapshot {snapshot_name}...")
+	subprocess.run(["btrfs", "subvolume", "snapshot", "-r", path, f"{BACKUP_TARGET_PATH}/{snapshot_name}"])
+
+def gen_snapshot_name():
+	return datetime.now().strftime("%Y%m%d")
+
+def remove_btrfs_snapshot(snapshot_name):
+	log("Removing snapshot {snapshot_name}...")
+	subprocess.run(["btrfs", "subvolume", "delete", f"{BACKUP_TARGET_PATH}/{snapshot_name}"])
+
+def snapshot_exists(snapshot_name):
+	snapshot_path = os.path.join(BACKUP_TARGET_PATH, snapshot_name)
+	return os.path.exists(snapshot_path)
+
+def find_snapshots_older_than(days):
+	oldest_date = datetime.now() - timedelta(days=days)
+	try:
+		snapshots = subprocess.run(["btrfs", "subvolume", "list", BACKUP_TARGET_PATH], capture_output=True, text=True, check=True).stdout.splitlines()
+		for snapshot in snapshots:
+			snapshot_info = snapshot.split()
+			if len(snapshot_info) >= 9:
+				date_string = snapshot_info[8] + " " + snapshot_info[9]
+				snapshot_date = datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
+				if snapshot_date < oldest_date:
+					remove_btrfs_snapshot(snapshot_info[8])
+	except Exception as e:
+		log(f"Error occurred while listing snapshots: {e}")
+
+
+def timestamp():
+	current_time = datetime.now()
+	return current_time.strftime("%d-%m-%Y %H:%M:%S")
+
+def log(text):
+	return print(f"[{timestamp()}] {text}")
+
+
+def is_backup_day():
+	current_date = datetime.now()
+	day_of_year = current_date.timetuple().tm_yday
+	return not day_of_year % BACKUP_DAYS
+
+# Main loop
+def backuper():
+	log("Started")
+	time.sleep(100)
+	spindown()
+	BACKUP_DONE_TODAY = True
+
+	try:
+		while True:
+			now = time.strftime("%H:%M")
+
+			# If it is later than BACKUP_AT and backup was not made today, do it
+			if is_backup_day() and now >= BACKUP_AT and not BACKUP_DONE_TODAY:
+				log("Doing full backup...")
+				BACKUP_DONE_TODAY = True
+				make_full_backup()
+				log("Full backup done!")
+
+			# If it is earlier than BACKUP_AT, let's assume there was no backup today
+			if now < BACKUP_AT:
+				BACKUP_DONE_TODAY = False
+
+			time.sleep(300)
+
+	except Exception as e:
+		notify("Backup service crashed!", f"Process exited with exception '{e}'.\nService needs to be restarted manually.")
+
+
+backuper()

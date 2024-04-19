@@ -28,3 +28,11 @@ Not backed up        each 3 days             when powered on
 				  | from last 90d  |       | single disk      |
 				   ''''''''''''''''         ''''''''''''''''''
 ```
+
+
+## Setup
+
+Setup partitions, permissions, blah blah blah
+
+Just run `backup.py` file, it will run infinitely and do backups automagically.
+Add it as systemd service for example

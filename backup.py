@@ -4,19 +4,23 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
-############################## CONFIG ##############################
+########################################### CONFIG ###########################################
 
-BACKUP_AT = "17:00"							# backup at HH:MM
-BACKUP_DAYS = 3								# backup each n days
-PURGE_DAYS = 60								# the oldest snapshot to keep
-BACKUP_TARGET_UUID = "uuid-1234-56789"		# UUID of RAID BTRFS filesystem
-BACKUP_TARGET_PATH = "/backups"				# RAID BTRFS mounted volume path
-BACKUP_DIR = "Backups"						# btrfs subvolume
-NTFY_URL = "http://127.0.0.1:8080/bckps"	# ntfy URL
-SPINDOWN_DEVICES = ["/dev/disk/by-partuuid/aaaa-bb-cccc",	# Paths to disks to spin down
-					"/dev/disk/by-partuuid/dddd-ee-ffff"]	# by using hdparm -Y
+BACKUP_AT = "17:00"												# backup at HH:MM
+BACKUP_DAYS = 3													# backup each n days
+PURGE_DAYS = 60													# the oldest snapshot to keep
+BACKUP_TARGET_UUID = "uuid-1234-56789"							# UUID of RAID BTRFS filesystem
+BACKUP_TARGET_PATH = "/backups"									# Where RAID BTRFS partition should be mounted
+BACKUP_DIR = "Backups"											# btrfs subvolume
+NTFY_URL = "http://127.0.0.1:8080/bckps"						# ntfy URL
+SPINDOWN_DEVICES = ["/dev/disk/by-partuuid/aaaa-bb-cccc",		# Paths to disks to spin down
+					"/dev/disk/by-partuuid/dddd-ee-ffff"]		# by using hdparm -Y
+OFFSITE_UUID = "/dev/disk/by-partuuid/gggg-hh-iiii"				# Offsite backup partition UUID
+OFFSITE_PATH = "/backups-offsite"								# Where offsite backup partition should be mounted
+STORAGES = ["/srv", "/home"]									# Directories to be backed up
+IGNORES = ["*/.local/share/containers/", "*/.cache"]			# Ignore those directories in rsync
 
-####################################################################
+##############################################################################################
 
 
 # PUSH Notifications & Logger
@@ -32,7 +36,14 @@ def backup_storage(storage_path, backup_target_path=BACKUP_TARGET_PATH):
 	if not os.path.exists(backup_dir):
 		os.makedirs(backup_dir)
 
-	r = subprocess.run(["rsync", "-aq", "--delete", f"{storage_path}/", f"{backup_target_path}/{BACKUP_DIR}/{storage_path}/"])
+	# Prepare rsync command
+	rsync_cmd = ["rsync", "-aq", "--delete"]
+	for folder in IGNORES:
+		rsync_cmd.extend(["--exclude", folder])
+	rsync_cmd.extend([f"{storage_path}/", f"{backup_target_path}/{BACKUP_DIR}/{storage_path}/"])
+
+	# Execute rsync and collect errors
+	r = subprocess.run(rsync_cmd)
 	if r.returncode != 0:
 		notify("Backup failed!", f"Rsync job for {storage_path} returned with error {r.returncode}.\nCheck logs for more details.")
 	else:
@@ -46,14 +57,11 @@ def spindown():
 		subprocess.run(["hdparm", "-Y", device])
 
 
-def mount():
-	subprocess.run(["mount", f"/dev/disk/by-uuid/{BACKUP_TARGET_UUID}", BACKUP_TARGET_PATH])
-
 # Make full backup
 def make_full_backup():
 	# Mount
 	log("Mounting backup drive...")
-	mount()
+	subprocess.run(["mount", f"/dev/disk/by-uuid/{BACKUP_TARGET_UUID}", BACKUP_TARGET_PATH])
 	time.sleep(30)
 
 	# Check if the target directory exists, create it if not
@@ -62,8 +70,8 @@ def make_full_backup():
 		os.makedirs(backup_dir)
 
 	# Backup data
-	backup_storage("/srv")
-	backup_storage("/storage/files")
+	for target in STORAGES:
+		backup_storage(target)
 
 	# Make snapshot, delete old ones
 	snapshot_name = gen_snapshot_name()
@@ -78,12 +86,30 @@ def make_full_backup():
 	spindown()
 
 
+# Make offsite backup
+def make_offsite_backup():
+	log("Mounting offsite backup drive...")
+	subprocess.run(["mount", f"/dev/disk/by-uuid/{OFFSITE_UUID}", OFFSITE_PATH])
+	notify("Offsite backup", "An external disk for off-site backups has been detected. Backup process will begin shortly.")
+	time.sleep(30)
+
+	# Backup data
+	for target in STORAGES:
+		backup_storage(target, OFFSITE_PATH)
+
+	# Unmount & Spindown
+	time.sleep(60)
+	subprocess.run(["umount", BACKUP_TARGET_PATH])
+	time.sleep(30)
+	subprocess.run(["hdparm", "-Y", f"/dev/disk/by-uuid/{OFFSITE_UUID}"])
+
+
 def make_btrfs_snapshot(path, snapshot_name):
 	log("Making snapshot {snapshot_name}...")
 	subprocess.run(["btrfs", "subvolume", "snapshot", "-r", path, f"{BACKUP_TARGET_PATH}/{snapshot_name}"])
 
 def gen_snapshot_name():
-	return datetime.now().strftime("%Y%m%d")
+	return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 def remove_btrfs_snapshot(snapshot_name):
 	log("Removing snapshot {snapshot_name}...")
@@ -127,6 +153,7 @@ def backuper():
 	time.sleep(100)
 	spindown()
 	BACKUP_DONE_TODAY = True
+	OFFSITE_DONE = False
 
 	try:
 		while True:
@@ -143,7 +170,16 @@ def backuper():
 			if now < BACKUP_AT:
 				BACKUP_DONE_TODAY = False
 
-			time.sleep(300)
+			# Check if offsite backup disk appeared
+			if os.path.exists(f"/dev/disk/by-uuid/{OFFSITE_UUID}") and not OFFSITE_DONE:
+				log("Doing offsite backup...")
+				OFFSITE_DONE = True
+				make_offsite_backup()
+				log("Offsite backup done!")
+			else:
+				OFFSITE_DONE = False
+
+			time.sleep(30)
 
 	except Exception as e:
 		notify("Backup service crashed!", f"Process exited with exception '{e}'.\nService needs to be restarted manually.")

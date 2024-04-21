@@ -64,6 +64,11 @@ def make_full_backup():
 	subprocess.run(["mount", f"/dev/disk/by-uuid/{BACKUP_TARGET_UUID}", BACKUP_TARGET_PATH])
 	time.sleep(30)
 
+	# Check if the target directory exists, create it if not
+	backup_dir = os.path.join(BACKUP_TARGET_PATH, BACKUP_DIR)
+	if not os.path.exists(backup_dir):
+		os.makedirs(backup_dir)
+
 	# Backup data
 	for target in STORAGES:
 		backup_storage(target)
@@ -87,6 +92,11 @@ def make_offsite_backup():
 	subprocess.run(["mount", f"/dev/disk/by-uuid/{OFFSITE_UUID}", OFFSITE_PATH])
 	notify("Offsite backup", "An external disk for off-site backups has been detected. Backup process will begin shortly.")
 	time.sleep(30)
+
+	# Check if the target directory exists, create it if not
+	backup_dir = os.path.join(OFFSITE_PATH, BACKUP_DIR)
+	if not os.path.exists(backup_dir):
+		os.makedirs(backup_dir)
 
 	# Backup data
 	for target in STORAGES:

@@ -93,9 +93,18 @@ def make_offsite_backup():
 	notify("Offsite backup", "An external disk for off-site backups has been detected. Backup process will begin shortly.")
 	time.sleep(30)
 
+	# Check if the target directory exists, create it if not
+	backup_dir = os.path.join(OFFSITE_PATH, BACKUP_DIR)
+	if not os.path.exists(backup_dir):
+		os.makedirs(backup_dir)
+
 	# Backup data
 	for target in STORAGES:
-		backup_storage(target, OFFSITE_PATH)
+		backup_storage(target, backup_target_path=OFFSITE_PATH)
+
+	# Make snapshot, don't delete any older ones
+	snapshot_name = gen_snapshot_name()
+	make_btrfs_snapshot(backup_dir, snapshot_name)
 
 	# Unmount & Spindown
 	time.sleep(60)

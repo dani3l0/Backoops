@@ -180,7 +180,7 @@ def backuper():
 				BACKUP_DONE_TODAY = False
 
 			# Check if offsite backup disk appeared
-			if os.path.exists(f"/dev/disk/by-uuid/{OFFSITE_UUID}") and not OFFSITE_DONE:
+			if os.path.islink(f"/dev/disk/by-uuid/{OFFSITE_UUID}") and not OFFSITE_DONE:
 				log("Doing offsite backup...")
 				OFFSITE_DONE = True
 				make_offsite_backup()

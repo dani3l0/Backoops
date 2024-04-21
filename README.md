@@ -15,18 +15,18 @@ I couldn't find any automatic and **reliable** backup solution so I've created m
 | (any fs)  |       | Two backup options                 |
  '''''' ''''         ''''''''  ''''''''''''''''''''''''''
       |                   |                         |
-	  |                   |                         |
-	 \|/                 \|/                       \|/
+      |                   |                         |
+     \|/                 \|/                       \|/
 Not backed up        each 3 days             when powered on
                           |                         |
-					      |                         |
-						 \|/                       \|/
-				   ________________         __________________
-				  | btrfs RAID 1   |       | Off-site backups |
-				  |----------------|       | btrfs with up to |
-				  | with snapshots |       | 10 snapshots     |
-				  | from last 90d  |       | single disk      |
-				   ''''''''''''''''         ''''''''''''''''''
+                          |                         |
+                         \|/                       \|/
+                   ________________         __________________
+                  | btrfs RAID 1   |       | Off-site backups |
+                  |----------------|       | btrfs with up to |
+                  | with snapshots |       | 10 snapshots     |
+                  | from last 90d  |       | single disk      |
+                   ''''''''''''''''         ''''''''''''''''''
 ```
 
 

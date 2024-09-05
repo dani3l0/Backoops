@@ -32,7 +32,7 @@ def notify(title, message):
 # Make a backup of one
 def backup_storage(storage_path, backup_target_path=BACKUP_TARGET_PATH):
 	log(f"Backing up '{storage_path}' ...")
-	backup_dir = os.path.join(backup_target_path, BACKUP_DIR, os.path.relpath(storage_path, "/"))
+	backup_dir = os.path.join(backup_target_path, BACKUP_DIR)
 	if not os.path.exists(backup_dir):
 		os.makedirs(backup_dir)
 

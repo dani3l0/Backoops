@@ -138,13 +138,13 @@ def find_snapshots_older_than(days):
 		snapshots = subprocess.run(["btrfs", "subvolume", "list", BACKUP_TARGET_PATH], capture_output=True, text=True, check=True).stdout.splitlines()
 		for snapshot in snapshots:
 			snapshot_info = snapshot.split()
-			if len(snapshot_info) >= 9:
-				date_string = snapshot_info[8] + " " + snapshot_info[9]
-				snapshot_date = datetime.strptime(date_string, "%Y-%m-%d %H:%M:%S.%f")
+			if len(snapshot_info) >= 8:
+				date_string = snapshot_info[8]
+				snapshot_date = datetime.strptime(date_string, "%Y%m%d-%H%M%S")
 				if snapshot_date < oldest_date:
 					remove_btrfs_snapshot(snapshot_info[8])
 	except Exception as e:
-		log(f"Error occurred while listing snapshots: {e}")
+		log(f"Error occurred while managing old snapshots: {e}")
 
 
 def timestamp():

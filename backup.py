@@ -43,9 +43,12 @@ def backup_storage(storage_path, backup_target_path=BACKUP_TARGET_PATH):
 	rsync_cmd.extend([storage_path, backup_dir])
 
 	# Execute rsync and collect errors
-	r = subprocess.run(rsync_cmd)
+	r = subprocess.run(rsync_cmd, capture_output=True, text=True)
 	if r.returncode != 0:
-		notify("Backup failed!", f"Rsync job for {storage_path} returned with error {r.returncode}.\nCheck logs for more details.")
+		stderr = ""
+		for line in r.stdout.split("\n")[-10:]:
+			stderr += line
+		notify("Backup failed!", f"Rsync job for {storage_path} returned with error {r.returncode}.\n{stderr}")
 	else:
 		notify("Backup successful!", f"Rsync job for {storage_path} completed without errors.")
 

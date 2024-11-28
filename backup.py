@@ -17,6 +17,7 @@ SPINDOWN_DEVICES = ["/dev/disk/by-partuuid/aaaa-bb-cccc",		# Paths to disks to s
 					"/dev/disk/by-partuuid/dddd-ee-ffff"]		# by using hdparm -Y
 OFFSITE_UUID = "gggg-hh-iiii-jjjjjjjj"							# Offsite backup filesystem UUID
 OFFSITE_PATH = "/backups-offsite"								# Where offsite backup partition should be mounted
+OFFSITE_SNAPSHOTS_COUNT = 10									# Max number of offsite snapshots
 STORAGES = ["/srv", "/home"]									# Directories to be backed up
 IGNORES = ["*/.local/share/containers/", "*/.cache"]			# Ignore those directories in rsync
 
@@ -45,10 +46,10 @@ def backup_storage(storage_path, backup_target_path=BACKUP_TARGET_PATH):
 	# Execute rsync and collect errors
 	r = subprocess.run(rsync_cmd, capture_output=True, text=True)
 	if r.returncode != 0:
-		stderr = ""
-		for line in r.stdout.split("\n")[-10:]:
+		stderr = "\n"
+		for line in r.stderr.split("\n")[-25:]:
 			stderr += line
-		notify("Backup failed!", f"Rsync job for {storage_path} returned with error {r.returncode}.\n{stderr}")
+		notify("Backup failed!", f"Rsync job for {storage_path} returned with error {r.returncode}{stderr}")
 	else:
 		notify("Backup successful!", f"Rsync job for {storage_path} completed without errors.")
 
@@ -109,7 +110,8 @@ def make_offsite_backup():
 	for target in STORAGES:
 		backup_storage(target, backup_target_path=OFFSITE_PATH)
 
-	# Make snapshot, don't delete any older ones
+	# Make snapshot, delete olders
+	remove_offsite_snapshots()
 	snapshot_name = gen_snapshot_name()
 	make_btrfs_snapshot(backup_dir, snapshot_name, OFFSITE_PATH)
 
@@ -131,23 +133,30 @@ def remove_btrfs_snapshot(snapshot_name):
 	log("Removing snapshot {snapshot_name}...")
 	subprocess.run(["btrfs", "subvolume", "delete", f"{BACKUP_TARGET_PATH}/{snapshot_name}"])
 
+def remove_offsite_snapshots():
+	snaps = subprocess.run(["btrfs", "subvolume", "list", OFFSITE_PATH], capture_output=True, text=True, check=True).stdout.splitlines()
+	for snap in snaps[:-OFFSITE_SNAPSHOTS_COUNT]:
+		log(f"Removing offsite snapshot {snap} ...")
+		subprocess.run(["btrfs", "subvolume", "delete", f"{OFFSITE_PATH}/{snapshot_name}"])
+
 def snapshot_exists(snapshot_name):
 	snapshot_path = os.path.join(BACKUP_TARGET_PATH, snapshot_name)
 	return os.path.exists(snapshot_path)
 
 def find_snapshots_older_than(days):
 	oldest_date = datetime.now() - timedelta(days=days)
-	try:
-		snapshots = subprocess.run(["btrfs", "subvolume", "list", BACKUP_TARGET_PATH], capture_output=True, text=True, check=True).stdout.splitlines()
-		for snapshot in snapshots:
+	snapshots = subprocess.run(["btrfs", "subvolume", "list", BACKUP_TARGET_PATH], capture_output=True, text=True, check=True).stdout.splitlines()
+	for snapshot in snapshots:
+		try:
 			snapshot_info = snapshot.split()
 			if len(snapshot_info) >= 8:
 				date_string = snapshot_info[8]
 				snapshot_date = datetime.strptime(date_string, "%Y%m%d-%H%M%S")
 				if snapshot_date < oldest_date:
+					log(f"Found old snapshot to be removed: {date_string}")
 					remove_btrfs_snapshot(snapshot_info[8])
-	except Exception as e:
-		log(f"Error occurred while managing old snapshots: {e}")
+		except Exception as e:
+			log(f"Error occurred while managing old snapshots: {e}")
 
 
 def timestamp():
@@ -199,4 +208,5 @@ def backuper():
 		notify("Backup service crashed!", f"Process exited with exception '{e}'.\nService needs to be restarted manually.")
 
 
-backuper()
+if __name__ == "__main__":
+	backuper()
